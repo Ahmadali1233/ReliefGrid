@@ -1,0 +1,63 @@
+/* Motion: tick burst, truck on its route, days-cap bars, checks. Turned off with "reduce motion". */
+.burst { position: fixed; z-index: 3000; width: 120px; height: 120px; margin: -60px 0 0 -60px; pointer-events: none; }
+.burst svg { overflow: visible; }
+.b-ring { fill: none; stroke: #14a37f; stroke-width: 3; transform-box: fill-box; transform-origin: center; animation: b-ring .6s cubic-bezier(.2,.7,.3,1) forwards; }
+.b-ray { stroke: #14a37f; stroke-width: 4; stroke-linecap: round; animation: b-ray .6s cubic-bezier(.2,.7,.3,1) forwards; }
+.b-tick circle { fill: #14a37f; }
+.b-tick path { fill: none; stroke: #fff; stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: b-draw .35s .12s ease-out forwards; }
+.b-tick { transform-box: fill-box; transform-origin: center; animation: b-pop 1s cubic-bezier(.3,1.6,.5,1) forwards; }
+@keyframes b-ring { from { transform: scale(.5); opacity: 1; } to { transform: scale(2.4); opacity: 0; } }
+@keyframes b-ray { 0% { transform: translateY(6px); opacity: 0; } 25% { opacity: 1; } 100% { transform: translateY(-14px); opacity: 0; } }
+@keyframes b-draw { to { stroke-dashoffset: 0; } }
+@keyframes b-pop { 0% { transform: scale(0); } 30% { transform: scale(1); opacity: 1; } 80% { transform: scale(1); opacity: 1; } 100% { transform: scale(.9); opacity: 0; } }
+
+.truck-strip { position: relative; height: 92px; margin: 16px 0 20px; --p: 0; }
+.ts-road { position: absolute; left: 14px; right: 14px; top: 46px; height: 6px; border-radius: 99px; background: var(--line, #e3e6ee); overflow: hidden; }
+.ts-fill { position: absolute; inset: 0 auto 0 0; width: calc(var(--p) * 100%); border-radius: inherit; background: #14a37f; transition: width 1.6s cubic-bezier(.3,.7,.3,1); }
+.ts-pin { position: absolute; top: 41px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface, #fff); border: 4px solid #14a37f; }
+.ts-from { left: 6px; } .ts-to { right: 6px; border-color: var(--ink, #151a2e); }
+.delivered .ts-to { border-color: #14a37f; background: #14a37f; }
+.ts-truck { position: absolute; top: 6px; left: calc(14px + var(--p) * (100% - 28px)); width: 70px; margin-left: -35px; transition: left 1.6s cubic-bezier(.3,.7,.3,1); }
+.ts-truck svg { display: block; overflow: visible; }
+.tr-box { fill: var(--surface, #fff); stroke: var(--ink, #151a2e); stroke-width: 2; }
+.tr-stripe { fill: #14a37f; } .tr-cab { fill: #14a37f; } .tr-win { fill: #cdeefe; }
+.tr-wheel circle { fill: var(--ink, #151a2e); } .tr-wheel path { stroke: #9aa3bd; stroke-width: 1.6; }
+.on_the_way .tr-wheel { animation: tr-spin .7s linear infinite; }
+.on_the_way .tr-body { animation: tr-bob .45s ease-in-out infinite alternate; }
+@keyframes tr-spin { to { transform: rotate(360deg); } }
+@keyframes tr-bob { from { transform: translateY(0); } to { transform: translateY(-1.5px); } }
+.ts-labels { position: absolute; left: 0; right: 0; top: 64px; display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--muted, #6b7390); }
+.ts-labels span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-labels span:last-child { text-align: right; }
+.ts-eta { flex: none; color: var(--ink, #151a2e); font-weight: 700; }
+
+.cap-bars { position: relative; display: flex; flex-direction: column; gap: 14px; margin: 30px 0 6px; --cap: .3; }
+.cap-row { display: grid; grid-template-columns: minmax(0, 210px) minmax(0, 1fr) 92px; gap: 14px; align-items: center; }
+.cap-name strong { display: block; font-size: 14.5px; } .cap-name span { font-size: 12.5px; color: var(--muted); }
+.cap-track { position: relative; height: 22px; border-radius: 8px; background: var(--line-soft); }
+.cap-bar { position: absolute; inset: 0 auto 0 0; border-radius: 8px; background: var(--pink, #e5487a); transition: width 1.2s cubic-bezier(.3,.7,.3,1), background-color 1.2s; }
+.cap-bar.up { background: var(--warn, #f5a524); }
+.cap-bar.moved { background: #14a37f; }
+.cap-val { font-size: 14px; color: var(--muted); text-align: right; } .cap-num { font-size: 20px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.cap-line { position: absolute; top: -8px; bottom: -6px; left: calc(224px + (100% - 330px) * var(--cap)); width: 0; border-left: 2px dashed var(--warn, #f5a524); z-index: 1; pointer-events: none; }
+.cap-line::after { content: attr(data-label); position: absolute; top: -18px; left: 6px; font-size: 12px; font-weight: 700; color: var(--warn-ink, #8a5a00); white-space: nowrap; }
+.cap-sum { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.cap-sum span { padding: 6px 12px; border-radius: 99px; background: var(--good-soft); color: var(--good-ink); font-weight: 700; font-size: 14px; }
+@media (max-width: 560px) { .cap-row { grid-template-columns: minmax(0, 1fr) 70px; } .cap-track { grid-column: 1 / -1; grid-row: 2; } .cap-line { display: none; } }
+
+.checks.animated li { opacity: 0; transform: translateY(6px); animation: ck-in .35s ease-out forwards; animation-delay: calc(var(--i) * 0.28s); }
+.checks.animated li > span { transform: scale(0); animation: ck-pop .45s cubic-bezier(.3,1.6,.5,1) forwards; animation-delay: calc(var(--i) * 0.28s + .18s); }
+@keyframes ck-in { to { opacity: 1; transform: none; } }
+@keyframes ck-pop { to { transform: scale(1); } }
+.lock-wrap { display: flex; align-items: center; gap: 16px; margin-top: 18px; padding: 14px 16px; border-radius: 14px; background: var(--good-soft); color: var(--good-ink); }
+.lock-wrap.bad { background: var(--bad-soft); color: var(--bad-ink); }
+.lock-wrap svg { flex: none; }
+.lock-shackle { transform: translateY(-5px); transition: transform .35s cubic-bezier(.3,1.6,.5,1); }
+.lock-wrap.shut .lock-shackle { transform: none; }
+.lock-wrap strong { display: block; font-size: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-fill, .ts-truck, .cap-bar { transition: none; }
+  .on_the_way .tr-wheel, .on_the_way .tr-body { animation: none; }
+  .checks.animated li, .checks.animated li > span { animation: none; opacity: 1; transform: none; }
+}

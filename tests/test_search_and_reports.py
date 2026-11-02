@@ -26,7 +26,8 @@ def test_sitrep_is_shareable_text(client):
 
 def test_forecast_and_what_if(client):
     items = {i["item"]: i for i in client.get("/api/inventory").json()}
-    assert items["Hygiene kits"]["hours_of_cover"] > 0
+    recent = [i for i in items.values() if i["rate_per_hour"] > 0]       # items asked for in the last 6 hours
+    assert recent and all(i["hours_of_cover"] > 0 for i in recent if i["total"] > 0)
     assert items["Water"]["waiting_requests"] == 6
     p = client.get("/api/inventory/restock/preview", params={"item": "Water", "quantity": 540, "warehouse_id": "WH-A"}).json()
     assert p["critical_covered_after"] == p["critical_total"] == 20

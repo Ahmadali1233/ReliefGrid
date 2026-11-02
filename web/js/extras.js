@@ -1,5 +1,6 @@
-// Night shift mode, sitrep and Quick find (Ctrl+K).
-import { openTrack, openWhy } from "./shared.js";
+// Night shift mode, sitrep and the command bar (Ctrl+K).
+import { applyCap, openIntegrity, openSupplyRequest, openTrack, openWhy, refresh, undo } from "./shared.js";
+import { celebrate } from "./motion.js";
 import { api, closeButton, closeOverlay, debounce, esc, icon, n, highlight, openModal, plural, toast, toastError } from "./ui.js";
 
 // ---------- Night shift mode ----------
@@ -42,56 +43,102 @@ export async function openSitrep() {
   } catch (e) { toastError(e); }
 }
 
-// ---------- Quick find (Ctrl+K or /) ----------
-// Plain search over shelters, requests, items and warehouses. It never guesses or acts on your behalf:
-// it finds things and takes you to them.
+// ---------- Command bar (Ctrl+K or /) ----------
+// Type a question or an instruction in plain words. The hub works it out offline (no AI service, no internet):
+// questions are answered straight away; changes are shown first and only happen when you press Enter.
 const TYPE_ICON = { shelter: icon.pin, request: icon.file, item: icon.box, warehouse: icon.truck, waybill: icon.truck, order: icon.file };
 const TYPE_LABEL = { shelter: "Shelter", request: "Request", item: "Item", warehouse: "Warehouse", waybill: "Waybill", order: "Supply order" };
 
 export function openCommand() {
   const el = openModal(`<div class="cmd-input">${icon.search(20)}
-      <label class="sr-only" for="qf">Find a shelter, request or item</label>
-      <input id="qf" autocomplete="off" spellcheck="false" placeholder="Waybill, request ID, shelter or item…" autofocus
-        role="combobox" aria-expanded="true" aria-controls="qf-list" aria-autocomplete="list">
+      <label class="sr-only" for="qf">Ask a question or tell ReliefGrid what to do</label>
+      <input id="qf" autocomplete="off" spellcheck="false" placeholder="Ask or do anything: “Johi Tent City needs 200 water”" autofocus
+        role="combobox" aria-expanded="true" aria-controls="qf-out">
       <span class="kbd" style="border-color:var(--line);color:var(--muted)">Esc</span></div>
-    <div class="cmd-result"><ul class="cmd-examples" id="qf-list" role="listbox"></ul>
-      <p class="cmd-hint">↑ ↓ to move · Enter to open</p></div>`);
+    <div class="cmd-result" id="qf-out" aria-live="polite"></div>`);
   el.classList.add("palette");
-  const input = el.querySelector("#qf"), list = el.querySelector("#qf-list");
-  let results = [], active = 0, seq = 0;
-  const open = (r) => {
+  const input = el.querySelector("#qf"), out = el.querySelector("#qf-out");
+  let res = null, active = 0, seq = 0, busy = false, answeredFor = null;
+
+  const go = (r) => {
     closeOverlay();
     if (r.track) openTrack(r.track);
     else if (r.why) openWhy(r.why);
-    else location.hash = `#/${r.route}`;
+    else if (r.order) openSupplyRequest();
+    else location.hash = `#/${r.route || ""}`;
   };
-  const draw = () => {
-    if (!input.value.trim()) {
-      list.innerHTML = `<li style="padding:8px 10px;color:var(--muted)">Type a waybill (WB-…), a request (REQ-…), a shelter or an item.</li>`;
+  async function run() {
+    if (!res || busy) return;
+    if (res.type === "results") { if (res.results[active]) go(res.results[active]); return; }
+    if (res.type === "navigate") { closeOverlay(); location.hash = `#/${res.route}`; return; }
+    if (res.type === "open") {
+      closeOverlay();
+      if (res.what === "order") openSupplyRequest(res.prefill || []);
+      else if (res.what === "sitrep") openSitrep();
+      else if (res.what === "integrity") openIntegrity();
       return;
     }
-    list.innerHTML = results.length ? results.map((r, i) => `<li><button type="button" role="option" aria-selected="${i === active}" data-i="${i}"
-        style="${i === active ? "background:var(--line-soft);color:var(--ink)" : ""}">${(TYPE_ICON[r.type] || icon.search)(16)}
-        <span style="flex:1;min-width:0"><strong style="font-weight:600">${esc(r.label)}</strong>
-          <span style="display:block;font-size:13px;color:var(--muted)">${esc(r.detail)}</span></span>
-        <span class="badge none">${TYPE_LABEL[r.type]}</span></button></li>`).join("")
-      : `<li style="padding:8px 10px;color:var(--muted)">Nothing matches "${esc(input.value.trim())}".</li>`;
-    list.querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => open(results[Number(b.dataset.i)])));
-    if (results.length) highlight(list, input.value);
-  };
-  const search = debounce(async () => {
-    const mine = ++seq;
-    if (!input.value.trim()) { results = []; draw(); return; }
+    if (res.type === "answer" && res.links?.length) { go(res.links[0]); return; }
+    if (res.type !== "action") return;
+    if (res.kind === "cap") { closeOverlay(); applyCap(res.call.body.max_days_per_shelter); return; }
+    if (res.call.path === "/api/undo") { closeOverlay(); undo(); return; }
+    busy = true;
+    const btn = out.querySelector("[data-run]"); if (btn) btn.disabled = true;
     try {
-      const r = await api(`/api/search?q=${encodeURIComponent(input.value.trim())}`);
-      if (mine === seq) { results = r.results; active = 0; draw(); }
+      const r = await api(res.call.path, { method: res.call.method, body: res.call.body });
+      closeOverlay();
+      celebrate();
+      const msg = r && r.id && r.given != null ? `${r.id} added: ${n(r.given)} of ${n(r.requested)} reserved now.`
+        : r && r.requests_served != null ? `${res.done} ${plural(r.requests_served, "waiting request")} served.` : res.done;
+      toast(msg, { action: "Undo", onAction: undo });
+      refresh();
+    } catch (e) { busy = false; if (btn) btn.disabled = false; toastError(e); }
+  }
+
+  const linkBtn = (l, i) => `<button class="btn small" type="button" data-link="${i}">${esc(l.label)}</button>`;
+  function draw() {
+    if (!res) { out.innerHTML = ""; return; }
+    if (res.type === "help") {
+      out.innerHTML = `<p class="cmd-lead">Ask a question or say what to do, in plain words. Nothing changes until you press Enter.</p>
+        <div class="cmd-chips">${res.examples.map((x) => `<button type="button" class="cmd-chip" data-ex="${esc(x)}">${esc(x)}</button>`).join("")}</div>
+        <p class="cmd-hint">Works offline. Also finds any waybill, request, shelter or item.</p>`;
+    } else if (res.type === "results") {
+      out.innerHTML = `<p class="cmd-lead">${esc(res.title)}</p>` + (res.results.length ? `<ul class="cmd-examples" role="listbox">${res.results.map((r, i) => `<li><button type="button" role="option" aria-selected="${i === active}" data-i="${i}"
+          style="${i === active ? "background:var(--line-soft);color:var(--ink)" : ""}">${(TYPE_ICON[r.type] || icon.search)(16)}
+          <span style="flex:1;min-width:0"><strong style="font-weight:600">${esc(r.label)}</strong>
+            <span style="display:block;font-size:13px;color:var(--muted)">${esc(r.detail)}</span></span>
+          <span class="badge none">${TYPE_LABEL[r.type]}</span></button></li>`).join("")}</ul><p class="cmd-hint">↑ ↓ to move · Enter to open</p>`
+        : `<div class="cmd-chips">${(res.examples || []).map((x) => `<button type="button" class="cmd-chip" data-ex="${esc(x)}">Try: ${esc(x)}</button>`).join("")}</div>`);
+      if (res.results.length) highlight(out.querySelector("ul"), input.value);
+    } else {
+      const isAction = res.type === "action", primary = isAction ? res.confirm
+        : res.type === "open" ? "Open" : res.type === "navigate" ? res.title : res.links?.[0]?.label;
+      out.innerHTML = `<div class="cmd-card is-${res.type}">
+          <span class="eyebrow">${isAction ? "Ready to do" : res.type === "answer" ? "Answer" : "Shortcut"}</span>
+          <h3>${esc(res.title)}</h3>
+          ${res.lines?.length ? `<ul class="cmd-lines">${res.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
+          <div class="cmd-actions">${primary ? `<button class="btn ${isAction ? "primary" : ""}" type="button" data-run>${esc(primary)} <kbd>Enter</kbd></button>` : ""}
+            ${(res.links || []).slice(primary && res.type === "answer" ? 1 : 0).map((l, i) => linkBtn(l, i + (primary && res.type === "answer" ? 1 : 0))).join("")}</div>
+        </div>${isAction ? `<p class="cmd-hint">Nothing has changed yet. Press Enter to do it, or keep typing to change it.</p>` : ""}`;
+    }
+    out.querySelectorAll("[data-ex]").forEach((b) => (b.onclick = () => { input.value = b.dataset.ex; input.focus(); ask(); }));
+    out.querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => go(res.results[Number(b.dataset.i)])));
+    out.querySelectorAll("[data-link]").forEach((b) => (b.onclick = () => go(res.links[Number(b.dataset.link)])));
+    out.querySelector("[data-run]")?.addEventListener("click", run);
+  }
+  async function ask() {
+    const mine = ++seq, text = input.value.trim();
+    try {
+      const r = await api(`/api/ask?q=${encodeURIComponent(text)}`);
+      if (mine === seq) { res = r; answeredFor = text; active = 0; busy = false; draw(); }
     } catch (e) { toastError(e); }
-  }, 100);
-  input.addEventListener("input", search);
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, results.length - 1); draw(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(active - 1, 0); draw(); }
-    else if (e.key === "Enter" && results[active]) { e.preventDefault(); open(results[active]); }
+  }
+  const later = debounce(ask, 160);
+  input.addEventListener("input", later);
+  input.addEventListener("keydown", async (e) => {
+    if (res?.type === "results" && e.key === "ArrowDown") { e.preventDefault(); active = Math.min(active + 1, res.results.length - 1); draw(); }
+    else if (res?.type === "results" && e.key === "ArrowUp") { e.preventDefault(); active = Math.max(active - 1, 0); draw(); }
+    else if (e.key === "Enter") { e.preventDefault(); if (input.value.trim() !== answeredFor) await ask(); run(); }
   });
-  draw();
+  ask();
 }

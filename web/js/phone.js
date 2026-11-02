@@ -3,6 +3,7 @@
 //   Shelter: counts what arrived, notes anything missing, signs        -> POST /api/handoff/.../receive
 // Missing or damaged units are recorded as a loss and go straight back in the queue for that shelter.
 // The coordinator's screen updates within a few seconds. English, Arabic and Urdu.
+import { celebrate } from "./motion.js";
 
 const T = {
   en: {
@@ -189,6 +190,7 @@ async function submit(e, kind, l) {
     const r = await call(`${base}/${kind}`, body, who);
     result = { kind, who, ...r };
     draw();
+    celebrate(main.querySelector(".tick"));
   } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
 }
 

@@ -1,5 +1,6 @@
 """ReliefGrid — Emergency Relief Operations & Dispatch System. Team FEAST, RIT Dubai 2026."""
 
+import asyncio
 import logging
 import re
 import sqlite3
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import inventory, requests, supply, system
 from .db.database import current_actor, get_conn, transaction
-from .db.seed import is_empty, load_sample
+from .db.seed import is_empty, load_sample, old_sample
 from .services.actions import NotFound
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
@@ -26,6 +27,9 @@ async def lifespan(app):
     conn = get_conn()
     if is_empty(conn):
         load_sample()
+    elif old_sample(conn):
+        load_sample()
+        print("  Sample data updated to the latest version (Dadu district).")
     elif not conn.execute("SELECT 1 FROM settings WHERE key = 'figures_seeded'").fetchone():
         # Databases from before planning figures existed: add the defaults once.
         from .services.people import seed_defaults
@@ -113,9 +117,17 @@ async def operator(request: Request, call_next):
     name = re.sub(r"\s+", " ", unquote(raw)).strip()[:40] or None   # sent URL-encoded so any language works
     token = current_actor.set(name)
     try:
+        if request.url.path.startswith("/api/"):
+            # One API call at a time: every call shares one SQLite connection, so a screen refreshing while a
+            # change is being saved must not read the change half-done. Calls take milliseconds, so nobody waits.
+            async with _one_at_a_time:
+                return await call_next(request)
         return await call_next(request)
     finally:
         current_actor.reset(token)
+
+
+_one_at_a_time = asyncio.Lock()
 
 
 app.include_router(system.router)

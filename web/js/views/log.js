@@ -1,23 +1,27 @@
 // Log: two tabs.
-//   Activity        everything that happened, newest first, grouped by day, searchable (matches highlighted)
+//   Activity        everything that happened. Sublogs on the left (requests, trucks, stock, orders, changes, undo),
+//                   filters for shelter, item, person and time, five ways to sort, search with highlights.
+//                   Click any WB-/REQ-/PO- number to follow that one thing's whole story. The latest change has Undo.
 //   Supply orders   what we asked HQ or suppliers for; tick it off when it arrives (all or part), undo a misclick
-import { openSupplyRequest, openTrack, openWhy, refresh } from "../shared.js";
+import { openNotice, openSupplyRequest, openTrack, openWhy, refresh, undo as undoLast } from "../shared.js";
 import { api, debounce, esc, highlight, icon, n, plural, selectMenu, toast, toastError } from "../ui.js";
 
-const st = { tab: "activity", q: "", cat: "", who: "", when: "", shown: 150, oq: "", ostatus: "open", partFor: null };
+const st = { tab: "activity", q: "", group: "", shelter: "", item: "", who: "", when: "", sort: "new", ref: "", shown: 120,
+  open: new Set(), oq: "", ostatus: "open", partFor: null };
 
-// What happened, grouped the way a coordinator thinks about it.
-const CATS = {
-  requests: { label: "Requests", icon: icon.plus, kinds: ["request", "cancel"] },
-  allocation: { label: "Stock reserved", icon: icon.box, kinds: ["allocation"] },
-  stock: { label: "Stock arrived", icon: icon.download, kinds: ["restock"] },
-  trucks: { label: "Trucks", icon: icon.truck, kinds: ["waybill", "dispatch", "delivered"] },
-  orders: { label: "Supply orders", icon: icon.file, kinds: ["order"] },
-  changes: { label: "Changes", icon: icon.sliders, kinds: ["rules", "shelter", "warehouse", "import", "undo", "system"] },
+// The sublogs: what happened, grouped the way a coordinator thinks about it.
+const GROUPS = {
+  requests: { label: "Requests", icon: icon.plus },
+  trucks: { label: "Trucks & deliveries", icon: icon.truck },
+  stock: { label: "Stock arrivals", icon: icon.download },
+  orders: { label: "Supply orders", icon: icon.file },
+  settings: { label: "Rules & settings", icon: icon.sliders },
+  undo: { label: "Undo history", icon: icon.undo || icon.sliders },
+  system: { label: "System", icon: icon.box },
 };
-const catOf = (kind) => Object.keys(CATS).find((k) => CATS[k].kinds.includes(kind)) || "changes";
-const WHEN = [["today", "Today"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"]];
-const dayKey = (d) => d.toISOString().slice(0, 10);
+const WHEN = [["1h", "Last hour"], ["today", "Today"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"]];
+const SORTS = [["new", "Newest first"], ["old", "Oldest first"], ["shelter", "By shelter"], ["item", "By item"], ["who", "By person"]];
+const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 const clock = (d) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 function dayLabel(d) {
   const today = new Date(), y = new Date(); y.setDate(today.getDate() - 1);
@@ -34,20 +38,24 @@ function ago(iso) {
   if (mins < 60 * 24) return `${Math.round(mins / 60)} h ago`;
   return `${Math.round(mins / 1440)} d ago`;
 }
-// Waybill, order and request numbers become links.
-const linkify = (text) => esc(text).replace(/\b(WB-\d{4}-\d{3}|PO-\d{4}-\d{3}|REQ-[\w-]+)\b/g,
-  (m) => `<button class="id-link" type="button" data-ref="${m}">${m}</button>`);
+// Waybill, order and request numbers become links that open that thing's own sublog.
+const linkify = (text) => esc(text).replace(/\b(WB-\d{4}-\d{3}|PO-\d{4}-\d{3}|REQ-\d{3,})\b/g,
+  (m) => `<button class="id-link" type="button" data-ref="${m}" title="Show everything about ${m}">${m}</button>`);
 const amount = (q, unit, item) => {
   const u = (unit || "").toLowerCase(), it = item.toLowerCase();
   return !u || u === "units" || it.includes(u) ? `${n(q)} ${it}` : `${n(q)} ${u} of ${it}`;
 };
+const initials = (who) => (who || "?").replace(/\(.*\)/, "").split(/[\s·]+/).filter(Boolean).slice(-1)[0]?.[0]?.toUpperCase() || "?";
 
 export async function render(main, { params, firstVisit }) {
   if (firstVisit && params.tab) st.tab = params.tab === "orders" ? "orders" : "activity";
-  const [events, sup] = await Promise.all([api("/api/events?limit=5000"), api("/api/supply/orders")]);
+  if (firstVisit && params.q) { if (st.tab === "orders") { st.oq = params.q; st.ostatus = "all"; } else st.ref = params.q; }
+  if (firstVisit && params.ref) { st.tab = "activity"; st.ref = params.ref; }
+  const [events, sup, last, look] = await Promise.all([api("/api/events?limit=5000"), api("/api/supply/orders"), api("/api/undo"),
+    api("/api/shelters")]);
   const openOrders = sup.orders.filter((o) => o.status === "ordered" || o.status === "part");
   main.innerHTML = `<div class="page ${firstVisit ? "fade-in" : ""}">
-    <div class="page-head"><div><h1>Log</h1><p>Everything that happened, and every supply order with what has arrived.</p></div>
+    <div class="page-head"><div><h1>Log</h1><p>Everything that happened, who did it, and every supply order with what has arrived.</p></div>
       <div class="head-actions"></div></div>
     <section class="card log-card">
       <div class="tabs" role="tablist">
@@ -63,101 +71,216 @@ export async function render(main, { params, firstVisit }) {
   }));
   const body = main.querySelector("#log-body"), actions = main.querySelector(".head-actions");
   if (st.tab === "orders") drawOrders(body, actions, sup.orders);
-  else drawActivity(body, actions, events);
+  else drawActivity(body, actions, events, last, look.shelters);
   body.addEventListener("click", (e) => {
     const b = e.target.closest("[data-ref]");
     if (!b) return;
+    e.stopPropagation();
     const ref = b.dataset.ref;
-    if (ref.startsWith("PO-")) { st.tab = "orders"; st.oq = ref; st.ostatus = "all"; render(main, { params: {}, firstVisit: false }); }
-    else if (ref.startsWith("WB-")) openTrack(ref);
-    else openWhy(ref);
+    if (st.tab === "orders" && ref.startsWith("PO-")) return;
+    if (b.dataset.go === "track") { if (ref.startsWith("REQ-")) openWhy(ref); else openTrack(ref); return; }
+    if (b.dataset.go === "orders") { st.tab = "orders"; st.oq = ref; st.ostatus = "all"; render(main, { params: {}, firstVisit: false }); return; }
+    st.ref = ref; st.shown = 120;
+    render(main, { params: {}, firstVisit: false });
   });
 }
 
 // ---------- Activity ----------
-function drawActivity(body, actions, events) {
-  const people = [...new Set(events.map((e) => e.actor).filter(Boolean))].sort();
+function drawActivity(body, actions, events, last, shelters) {
+  const shName = Object.fromEntries(shelters.map((s) => [s.id, s.name]));
+  const people = [...new Set(events.map((e) => e.actor || "Hub"))].sort();
+  const items = [...new Set(events.flatMap((e) => e.items))].sort();
+  const usedShelters = [...new Set(events.flatMap((e) => e.shelters))].sort((a, b) => (shName[a] || a).localeCompare(shName[b] || b));
+  const undoable = last.label ? events.filter((e) => e.created_at >= last.at && e.kind !== "undo" && !e.undone) : [];
+  const undoIds = new Set(undoable.map((e) => e.id));
+  let threadRefs = new Set([st.ref]);   // a waybill's sublog also shows its requests, and a request's its waybills
   actions.innerHTML = `<button class="btn" type="button" data-export>${icon.download(17)}Export what's shown (CSV)</button>`;
-  body.innerHTML = `<div class="tbl-tools log-tools">
-      <label class="tbl-search"><span class="sr-only">Search the log</span>${icon.search(16)}
-        <input class="input" type="search" placeholder="Search: shelter, item, waybill, person…" value="${esc(st.q)}"></label>
-      <span class="menus" style="display:contents"></span>
-      <span class="tbl-count" aria-live="polite"></span>
-      <button class="btn link tbl-clear" type="button" hidden>Clear</button></div>
-    <div class="feed-list"></div>`;
-  const list = body.querySelector(".feed-list"), count = body.querySelector(".tbl-count"), clear = body.querySelector(".tbl-clear");
-  const menus = [
-    selectMenu({ label: "What", value: st.cat, options: Object.entries(CATS).map(([k, c]) => [k, c.label, events.filter((e) => catOf(e.kind) === k).length]).filter((o) => o[2] || o[0] === st.cat),
-      onChange: (v) => { st.cat = v; st.shown = 150; draw(); } }),
-    selectMenu({ label: "By", value: st.who, options: [["hub", "Hub (this computer)", events.filter((e) => !e.actor).length], ...people.map((p) => [p, `${p} (phone)`, events.filter((e) => e.actor === p).length])],
-      onChange: (v) => { st.who = v; st.shown = 150; draw(); } }),
-    selectMenu({ label: "When", value: st.when, allLabel: "Any time", options: WHEN, onChange: (v) => { st.when = v; st.shown = 150; draw(); } }),
-  ];
-  body.querySelector(".menus").append(...menus);
-
-  const visible = () => {
-    const q = st.q.trim().toLowerCase();
-    const now = Date.now(), today = new Date().toDateString();
-    return events.filter((e) => {
-      const t = new Date(e.created_at);
-      if (st.cat && catOf(e.kind) !== st.cat) return false;
-      if (st.who === "hub" ? e.actor : st.who && e.actor !== st.who) return false;
-      if (st.when === "today" && t.toDateString() !== today) return false;
-      if (st.when === "24h" && now - t.getTime() > 864e5) return false;
-      if (st.when === "7d" && now - t.getTime() > 7 * 864e5) return false;
-      if (q && !`${e.message} ${e.actor || ""} ${CATS[catOf(e.kind)].label}`.toLowerCase().includes(q)) return false;
-      return true;
-    });
+  body.innerHTML = `<div class="log-grid">
+      <nav class="log-rail" aria-label="Sublogs"></nav>
+      <div class="log-main">
+        ${last.label ? `<div class="undo-bar" role="status"><span class="undo-ico">${icon.undo ? icon.undo(18) : "↶"}</span>
+          <div><strong>Last change:</strong> ${esc(last.label)} <span class="muted">· ${esc(ago(last.at))}</span>
+          <span class="undo-left">Undo is available for ${Math.max(1, Math.ceil(last.seconds_left / 60))} more min</span></div>
+          <button class="btn small primary" type="button" data-undo>Undo</button></div>` : ""}
+        <div class="thread"></div>
+        <div class="tbl-tools log-tools">
+          <label class="tbl-search"><span class="sr-only">Search the log</span>${icon.search(16)}
+            <input class="input" type="search" placeholder="Search anything: shelter, item, WB-…, person…" value="${esc(st.q)}"></label>
+          <span class="menus" style="display:contents"></span></div>
+        <div class="chips-row"><span class="active-chips"></span><span class="tbl-count" aria-live="polite"></span>
+          <button class="btn link tbl-clear" type="button" hidden>Clear all</button></div>
+        <div class="feed-list"></div>
+      </div></div>`;
+  const rail = body.querySelector(".log-rail"), list = body.querySelector(".feed-list"), count = body.querySelector(".tbl-count");
+  const clear = body.querySelector(".tbl-clear"), chips = body.querySelector(".active-chips"), thread = body.querySelector(".thread");
+  const opt = (arr, key, label) => arr.map((v) => [v, label ? label(v) : v, events.filter((e) => key(e, v)).length]);
+  const menus = {
+    shelter: selectMenu({ label: "Shelter", value: st.shelter, options: opt(usedShelters, (e, v) => e.shelters.includes(v), (v) => shName[v] || v),
+      onChange: (v) => set({ shelter: v }) }),
+    item: selectMenu({ label: "Item", value: st.item, options: opt(items, (e, v) => e.items.includes(v)), onChange: (v) => set({ item: v }) }),
+    who: selectMenu({ label: "Person", value: st.who, options: opt(people, (e, v) => (e.actor || "Hub") === v), onChange: (v) => set({ who: v }) }),
+    when: selectMenu({ label: "When", value: st.when, allLabel: "Any time", options: WHEN, onChange: (v) => set({ when: v }) }),
+    sort: selectMenu({ label: "Sort", value: st.sort === "new" ? "" : st.sort, allLabel: "Newest first", options: SORTS.slice(1), onChange: (v) => set({ sort: v || "new" }) }),
   };
+  body.querySelector(".menus").append(...Object.values(menus));
+  function set(change) { Object.assign(st, change, { shown: 120 }); draw(); }
+
+  const match = (e, skip = "") => {
+    const t = new Date(e.created_at).getTime(), now = Date.now(), q = st.q.trim().toLowerCase();
+    if (skip !== "group" && st.group && e.group !== st.group) return false;
+    if (st.ref && !e.refs.some((r) => threadRefs.has(r))) return false;
+    if (st.shelter && !e.shelters.includes(st.shelter)) return false;
+    if (st.item && !e.items.includes(st.item)) return false;
+    if (st.who && (e.actor || "Hub") !== st.who) return false;
+    if (st.when === "1h" && now - t > 36e5) return false;
+    if (st.when === "today" && new Date(t).toDateString() !== new Date().toDateString()) return false;
+    if (st.when === "24h" && now - t > 864e5) return false;
+    if (st.when === "7d" && now - t > 7 * 864e5) return false;
+    if (q && !`${e.message} ${e.actor || "Hub"} ${GROUPS[e.group]?.label || ""} ${e.shelters.map((s) => shName[s]).join(" ")}`.toLowerCase().includes(q)) return false;
+    return true;
+  };
+
+  function drawRail() {
+    const base = events.filter((e) => match(e, "group"));
+    const row = (key, label, ic, c) => `<button type="button" class="rail-item" data-group="${key}" aria-pressed="${st.group === key}">
+      <span class="rail-ico">${ic(16)}</span><span class="rail-label">${label}</span><span class="rail-count">${n(c)}</span></button>`;
+    rail.innerHTML = `<p class="rail-title">Sublogs</p>${row("", "All activity", icon.search, base.length)}`
+      + Object.entries(GROUPS).map(([k, g]) => [k, g, base.filter((e) => e.group === k).length])
+        .filter(([k, , c]) => c || st.group === k).map(([k, g, c]) => row(k, g.label, g.icon, c)).join("");
+    rail.querySelectorAll("[data-group]").forEach((b) => (b.onclick = () => set({ group: b.dataset.group })));
+  }
+
+  async function drawThread() {
+    if (!st.ref) { thread.innerHTML = ""; return; }
+    const kind = st.ref.startsWith("WB-") ? "Waybill" : st.ref.startsWith("PO-") ? "Supply order" : "Request";
+    thread.innerHTML = `<div class="thread-card"><div class="thread-top"><span class="eyebrow">${kind} sublog</span>
+        <button class="btn link" type="button" data-close-thread>${icon.x ? icon.x(14) : "✕"} Back to all activity</button></div>
+      <h3>${esc(st.ref)}</h3><p class="thread-head muted">Everything that happened to it, in order.</p>
+      <div class="thread-actions">${st.ref.startsWith("PO-")
+        ? `<button class="btn small" type="button" data-ref="${st.ref}" data-go="orders">Open in Supply orders</button>`
+        : `<button class="btn small" type="button" data-ref="${st.ref}" data-go="track">${st.ref.startsWith("WB-") ? "Track it" : "Why? and tracking"}</button>`}</div></div>`;
+    thread.querySelector("[data-close-thread]").onclick = () => { set({ ref: "" }); drawThread(); };
+    if (!st.ref.startsWith("PO-")) {
+      try {
+        const t = await api(`/api/track/${encodeURIComponent(st.ref)}`);
+        const h = thread.querySelector(".thread-head"); if (h) h.textContent = t.headline;
+        threadRefs = new Set([st.ref, ...(t.requests || []), ...(t.shipments || []).map((x) => x.waybill)]);
+        draw();
+      } catch { /* old or removed */ }
+    }
+  }
+
+  function drawChips() {
+    const c = [];
+    if (st.group) c.push(["group", GROUPS[st.group].label]);
+    if (st.shelter) c.push(["shelter", shName[st.shelter] || st.shelter]);
+    if (st.item) c.push(["item", st.item]);
+    if (st.who) c.push(["who", st.who]);
+    if (st.when) c.push(["when", WHEN.find((w) => w[0] === st.when)[1]]);
+    if (st.q.trim()) c.push(["q", `“${st.q.trim()}”`]);
+    chips.innerHTML = c.map(([k, label]) => `<button type="button" class="fchip" data-clear="${k}">${esc(label)}<span aria-hidden="true">✕</span><span class="sr-only">Remove filter</span></button>`).join("");
+    chips.querySelectorAll("[data-clear]").forEach((b) => (b.onclick = () => {
+      const k = b.dataset.clear;
+      if (k === "q") body.querySelector(".tbl-search input").value = "";
+      if (menus[k]) menus[k].setValue("");
+      set({ [k]: "" });
+    }));
+    clear.hidden = !c.length;
+  }
+
+  const entryHtml = (e) => {
+    const d = new Date(e.created_at), g = GROUPS[e.group] || GROUPS.system, who = e.actor || "Hub", open = st.open.has(e.id);
+    const related = e.refs.filter((r) => r !== st.ref);
+    return `<li class="entry grp-${e.group}${open ? " open" : ""}${undoIds.has(e.id) ? " undoable" : ""}${e.undone ? " was-undone" : ""}" data-id="${e.id}">
+        <time datetime="${esc(e.created_at)}" title="${esc(d.toLocaleString("en-GB"))}">${clock(d)}</time>
+        <span class="dot">${g.icon(15)}</span>
+        <div class="what"><p>${linkify(e.message)}</p>
+          <span class="meta">${e.undone ? `<span class="undone-tag">Undone</span>` : ""}<span class="who" title="${esc(who)}"><i>${esc(initials(who))}</i>${esc(who)}</span> · ${esc(g.label)} · ${esc(ago(e.created_at))}</span>
+          ${open ? `<div class="entry-more">
+            ${e.shelters.length ? `<span>Shelter: ${e.shelters.map((s) => `<button type="button" class="tag" data-pick-shelter="${s}">${esc(shName[s] || s)}</button>`).join(" ")}</span>` : ""}
+            ${e.items.length ? `<span>Item: ${e.items.map((i) => `<button type="button" class="tag" data-pick-item="${esc(i)}">${esc(i)}</button>`).join(" ")}</span>` : ""}
+            ${related.length ? `<span>Follow: ${related.map((r) => `<button type="button" class="tag strong" data-ref="${r}">${r} →</button>`).join(" ")}</span>` : ""}
+            <span class="muted">${esc(d.toLocaleString("en-GB", { dateStyle: "full", timeStyle: "short" }))}</span></div>` : ""}</div>
+        ${undoIds.has(e.id) ? `<button class="btn small undo-one" type="button" data-undo title="Undo: ${esc(last.label)}">Undo</button>` : ""}</li>`;
+  };
+
   function draw() {
-    const rows = visible();
-    const filtered = st.q.trim() || st.cat || st.who || st.when;
-    clear.hidden = !filtered;
+    drawRail(); drawChips();
+    let rows = events.filter((e) => match(e));
+    if (st.sort === "old") rows = rows.slice().reverse();
+    const filtered = st.q.trim() || st.group || st.shelter || st.item || st.who || st.when || st.ref;
     if (!rows.length) {
-      list.innerHTML = `<div class="empty"><strong>${events.length ? "Nothing matches." : "Nothing has happened yet."}</strong>${events.length ? "Try a different word, or clear the filters." : ""}</div>`;
+      list.innerHTML = `<div class="empty"><strong>${events.length ? "Nothing matches." : "Nothing has happened yet."}</strong>${events.length ? "Try a different word, or remove a filter." : ""}</div>`;
       count.textContent = "";
       return;
     }
     const page = rows.slice(0, st.shown);
-    let html = "", day = null;
-    for (const e of page) {
-      const d = new Date(e.created_at), k = dayKey(d), cat = catOf(e.kind);
-      if (k !== day) {
-        if (day) html += "</ol></section>";
-        day = k;
-        html += `<section class="day"><h3 class="day-head">${esc(dayLabel(d))}<span>${rows.filter((x) => dayKey(new Date(x.created_at)) === k).length}</span></h3><ol>`;
+    let html = "";
+    if (st.sort === "new" || st.sort === "old") {
+      let day = null;
+      for (const e of page) {
+        const d = new Date(e.created_at), k = dayKey(d);
+        if (k !== day) {
+          if (day) html += "</ol></section>";
+          day = k;
+          html += `<section class="day"><h3 class="day-head">${esc(dayLabel(d))}<span>${rows.filter((x) => dayKey(new Date(x.created_at)) === k).length}</span></h3><ol>`;
+        }
+        html += entryHtml(e);
       }
-      html += `<li class="entry cat-${cat}">
-          <time datetime="${esc(e.created_at)}" title="${esc(d.toLocaleString("en-GB"))}">${clock(d)}</time>
-          <span class="dot">${CATS[cat].icon(15)}</span>
-          <div class="what"><p>${linkify(e.message)}</p>
-            <span class="meta">${esc(CATS[cat].label)} · ${e.actor ? `${icon.phone(12)} ${esc(e.actor)}` : "Hub"}</span></div></li>`;
+      html += "</ol></section>";
+    } else {
+      const keyOf = { shelter: (e) => e.shelters[0] || "", item: (e) => e.items[0] || "", who: (e) => e.actor || "Hub" }[st.sort];
+      const label = { shelter: (k) => shName[k] || "Not about one shelter", item: (k) => k || "Not about one item", who: (k) => k }[st.sort];
+      const groups = new Map();
+      for (const e of page) { const k = keyOf(e); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+      [...groups.entries()].sort((a, b) => b[1].length - a[1].length || label(a[0]).localeCompare(label(b[0]))).forEach(([k, es]) => {
+        html += `<section class="day"><h3 class="day-head">${esc(label(k))}<span>${es.length}</span></h3><ol>${es.map(entryHtml).join("")}</ol></section>`;
+      });
     }
-    html += "</ol></section>";
-    if (rows.length > page.length) html += `<button class="btn more" type="button" data-more>Show ${n(Math.min(150, rows.length - page.length))} more of ${n(rows.length - page.length)}</button>`;
+    if (rows.length > page.length) html += `<button class="btn more" type="button" data-more>Show ${n(Math.min(120, rows.length - page.length))} more of ${n(rows.length - page.length)}</button>`;
     list.innerHTML = html;
     const hits = st.q.trim() ? highlight(list, st.q) : 0;
     count.textContent = st.q.trim()
       ? `${plural(rows.length, "entry", "entries")} · ${plural(hits, "match", "matches")} highlighted`
       : filtered ? `${n(rows.length)} of ${plural(events.length, "entry", "entries")}` : plural(events.length, "entry", "entries");
-    list.querySelector("[data-more]")?.addEventListener("click", () => { st.shown += 150; draw(); });
+    list.querySelector("[data-more]")?.addEventListener("click", () => { st.shown += 120; draw(); });
   }
-  body.querySelector(".tbl-search input").addEventListener("input", debounce((e) => { st.q = e.target.value; st.shown = 150; draw(); }, 120));
-  clear.onclick = () => {
-    st.q = ""; st.cat = ""; st.who = ""; st.when = ""; st.shown = 150;
-    body.querySelector(".tbl-search input").value = "";
-    menus.forEach((m) => m.setValue(""));
+
+  list.addEventListener("click", (ev) => {
+    const t = ev.target;
+    if (t.closest("[data-ref]") || t.closest("[data-undo]")) return;
+    const sh = t.closest("[data-pick-shelter]"), it = t.closest("[data-pick-item]");
+    if (sh) { menus.shelter.setValue(sh.dataset.pickShelter); set({ shelter: sh.dataset.pickShelter }); return; }
+    if (it) { menus.item.setValue(it.dataset.pickItem); set({ item: it.dataset.pickItem }); return; }
+    const li = t.closest(".entry");
+    if (!li || window.getSelection()?.toString()) return;
+    const id = Number(li.dataset.id);
+    if (st.open.has(id)) st.open.delete(id); else st.open.add(id);
     draw();
+  });
+  body.addEventListener("click", async (ev) => {
+    if (!ev.target.closest("[data-undo]")) return;
+    await undoLast();
+  });
+  body.querySelector(".tbl-search input").addEventListener("input", debounce((e) => set({ q: e.target.value }), 120));
+  clear.onclick = () => {
+    threadRefs = new Set();
+    Object.assign(st, { q: "", group: "", shelter: "", item: "", who: "", when: "", ref: "" });
+    body.querySelector(".tbl-search input").value = "";
+    ["shelter", "item", "who", "when"].forEach((k) => menus[k].setValue(""));
+    set({}); drawThread();
   };
   actions.querySelector("[data-export]").onclick = () => {
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const csv = ["time,what,message,by", ...visible().map((e) => [e.created_at, CATS[catOf(e.kind)].label, e.message, e.actor || "Hub"].map(q).join(","))].join("\n");
+    const csv = ["time,sublog,message,by,shelters,items,numbers", ...events.filter((e) => match(e)).map((e) => [e.created_at, GROUPS[e.group]?.label, e.message,
+      e.actor || "Hub", e.shelters.map((s) => shName[s] || s).join("; "), e.items.join("; "), e.refs.join("; ")].map(q).join(","))].join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = `reliefgrid-log-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
+  drawThread();
   draw();
 }
 
@@ -268,7 +391,9 @@ function drawOrders(body, actions, orders) {
     } else if (t.hasAttribute("data-part-cancel")) {
       st.partFor = null; draw();
     } else if (t.dataset.cancel) {
-      withUndo(post(`/api/supply/orders/${t.dataset.cancel}/cancel`), (r) => `${r.id} cancelled.`, (r) => post(`/api/supply/orders/${r.id}/reopen`)).catch(() => {});
+      withUndo(post(`/api/supply/orders/${t.dataset.cancel}/cancel`), (r) => `${r.id} cancelled.`,
+        async (r) => { const back = await post(`/api/supply/orders/${r.id}/reopen`); openNotice(back.notify); })
+        .then((r) => openNotice(r.notify)).catch(() => {});
     } else if (t.dataset.close) {
       withUndo(post(`/api/supply/orders/${t.dataset.close}/close`), (r) => `${r.id} closed. The rest is no longer expected.`, (r) => post(`/api/supply/orders/${r.id}/reopen`)).catch(() => {});
     } else if (t.dataset.reopen) {

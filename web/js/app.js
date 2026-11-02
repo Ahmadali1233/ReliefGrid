@@ -127,7 +127,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 // If the interface is newer than the server (e.g. files updated while an old server kept running), say so plainly.
-const API_LEVEL = 6;
+const API_LEVEL = 7;
 fetch("/api/version").then((r) => (r.ok ? r.json() : null)).catch(() => null).then((v) => {
   if (v && v.api_level >= API_LEVEL) return;
   const bar = document.createElement("div");

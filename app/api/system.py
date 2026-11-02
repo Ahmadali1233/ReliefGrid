@@ -5,10 +5,10 @@ import json
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from ..db.database import get_conn, rows, transaction
+from ..db.database import get_conn, now, rows, transaction
 from ..db.seed import load_empty, load_sample
 from ..reports import report as reports
-from ..services import actions, history, importing, queries
+from ..services import actions, assistant, history, importing, queries
 from ..services.allocation import load_rules
 from ..services.integrity import run_checks
 
@@ -115,17 +115,42 @@ def put_rules(body: dict):
 
 @router.get("/api/undo")
 def can_undo():
-    return {"label": history.last_label(get_conn())}
+    snap = history.last_snapshot(get_conn())
+    return {"label": snap["label"] if snap else None, "at": snap["at"] if snap else None,
+            "seconds_left": snap["seconds_left"] if snap else 0}
+
+
+@router.get("/api/ask")
+def ask(q: str = ""):
+    """The command bar: a plain-words question or instruction -> an answer, or a previewed action to confirm."""
+    return assistant.ask(q[:300])
 
 
 @router.post("/api/undo")
 def undo():
     """Reverse the last change."""
+    import re
+    from ..services import supply
+    snap = history.last_snapshot(get_conn())
+    m = re.fullmatch(r"supply order (PO-\d{4}-\d{3})", snap["label"]) if snap else None
+    if m:
+        # The order already went out by WhatsApp, email or copy-paste. Erasing it would hide that; instead it is
+        # cancelled (kept in the log) and the person gets a cancellation message to send to the same supplier.
+        with transaction() as conn:
+            conn.execute("DELETE FROM snapshots WHERE id = (SELECT MAX(id) FROM snapshots)")
+            history.mark_undone(conn, snap["at"])
+        supply.cancel_order(m.group(1))
+        with transaction() as conn:
+            conn.execute("DELETE FROM snapshots WHERE id = (SELECT MAX(id) FROM snapshots)")
+            conn.execute("INSERT INTO events (created_at, kind, message, data) VALUES (?, 'undo', ?, ?)",
+                         (now(), f"Undid: {snap['label']} (kept in the log as cancelled)", json.dumps({"order": m.group(1)})))
+        return {"undone": snap["label"], "notify": supply.notice(m.group(1), "cancel")}
     with transaction() as conn:
         label = history.undo(conn)
     if label is None:
         raise HTTPException(409, "There's nothing to undo. Undo only covers your last change, within 10 minutes.")
-    return {"undone": label}
+    m = re.fullmatch(r"cancel (PO-\d{4}-\d{3})", label)
+    return {"undone": label, "notify": supply.notice(m.group(1), "reinstate") if m else None}
 
 
 @router.get("/api/reports")

@@ -132,7 +132,7 @@ export function drawReliefWeb(box, net) {
       ${[["waiting", "Waiting for stock"], ["to_load", "Waiting for a truck"], ["on_the_way", "Truck on the road"], ["delivered", "Delivered"]].map(([k, l]) =>
         `<button type="button" class="ws ${k}" data-state="${k}" aria-pressed="false" ${counts[k] ? "" : "disabled"}><span class="sw"></span><strong>${counts[k]}</strong>${l}</button>`).join("")}
     </div>
-    <p class="web-help">Each dot is a shelter; bigger means more people. Rings are shelter priority: <span class="ring-key">1</span> inner, most vulnerable, to <span class="ring-key">${levels[levels.length - 1]}</span> outer. Lines are loads from the warehouses in the middle. Tap a state to pick those shelters out.</p>`;
+    <details class="web-help"><summary>How to read this</summary><p>Each dot is a shelter; bigger means more people. Rings are shelter priority: <span class="ring-key">1</span> inner, most vulnerable, to <span class="ring-key">${levels[levels.length - 1]}</span> outer. Lines are loads from the warehouses in the middle. Tap a state to pick those shelters out.</p></details>`;
 
   // Hover or focus a shelter: light up its loads, dim the rest, and show a card with the details.
   const svg = box.querySelector("svg"), card = box.querySelector(".web-card");

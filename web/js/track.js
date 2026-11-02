@@ -1,5 +1,6 @@
 // Public tracking page: anyone on the hub's network can check a waybill or a request, like a parcel.
 // Read-only. Confirming a pick-up or delivery needs the QR on the printed waybill.
+import { runTruck, truckStrip } from "./motion.js";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const num = (x) => Number(x).toLocaleString("en-US");
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); };
@@ -33,10 +34,12 @@ async function track(code) {
   main.innerHTML = `<section class="card">
       <span class="chip ${t.type === "waybill" ? t.status : ""}">${esc(t.number)}</span>
       <p class="headline" style="margin-top:10px">${esc(t.headline)}</p><p class="sub-line">${sub}</p>
+      ${truckStrip(t)}
       <ol class="tl">${t.steps.map((s) => `<li class="${s.done ? "done" : ""}"><span class="d">${s.done ? tick : ""}</span>
         <div><strong>${esc(s.label)}</strong>${s.done && s.at ? `<time>${when(s.at)}</time>` : ""}${s.detail ? `<p>${esc(s.detail)}</p>` : ""}</div></li>`).join("")}</ol>
     </section>
     ${items ? `<section class="card">${items}</section>` : ""}`;
+  runTruck(main);
 }
 
 form.onsubmit = (e) => { e.preventDefault(); track(input.value); };

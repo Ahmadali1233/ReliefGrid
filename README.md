@@ -41,7 +41,7 @@ Interactive API docs: **http://localhost:8000/docs**
 | Inventory tracking: live stock, no negative stock, insufficient-stock handling | `app/services/allocation.py` + database CHECK constraints |
 | GUI: enter requests, inspect inventory, view allocation logs | Requests, Inventory, Dispatch and Log screens |
 | Export and reporting: JSON, CSV, PDF of fulfilled and unfilled requests | Report button · `GET /api/reports?format=json\|csv\|pdf` |
-| Automated tests incl. negative stock and edge cases | `tests/` (167 tests) |
+| Automated tests incl. negative stock and edge cases | `tests/` (181 tests) |
 | Database, REST API, GUI | SQLite · FastAPI · HTML/CSS/JavaScript |
 
 ### Three things that set it apart
@@ -50,8 +50,8 @@ Interactive API docs: **http://localhost:8000/docs**
 The QR on the printed waybill opens a page on the driver's phone ("Loaded: truck leaving now") and, at the
 other end, on the shelter manager's phone, where they count what actually arrived and sign. If 2 cartons arrived
 crushed, that's recorded with a note and those 2 go straight back in the queue for that shelter. Anyone can type a
-waybill or request number into **Find or track** (or open `/track.html` on a phone) and see a timeline:
-Requested → Reserved → On a truck (with an arrival estimate) → Delivered. The phone page works in English, Arabic
+waybill or request number into the command bar (or open `/track.html` on a phone) and see the truck on its
+route with the time to go, and a timeline: Requested → Reserved → On a truck → Delivered. The phone page works in English, Arabic
 and Urdu. The coordinator's screen updates by itself within seconds.
 
 **2. People, not boxes.** Shelters have a headcount and items have planning figures (the Sphere humanitarian
@@ -92,8 +92,29 @@ dotted = waiting for a truck, solid = delivered).
    back on the shelf for others. Headcounts are updated on the Shelters screen.
 8. **Report.** One-click sitrep text, and JSON, CSV or PDF reports of fulfilled and unfilled requests and waybills.
 
-The Log keeps every action, grouped by day, with waybill, order and request numbers as links; search highlights
-every match like Ctrl+F, and what's shown exports to CSV. Undo reverses your last change within 10 minutes.
+**Ask or do anything (Ctrl+K).** Type in plain words: "Johi Tent City needs 200 water, critical", "How much baby
+milk do we have?", "Who is waiting for blankets?", "Received 300 water at Warehouse A", "Where is WB-1102-004?",
+"Order 48 baby milk", "Cap at 7 days", "Undo". Questions are answered straight away. Changes are shown first (what
+the request would get now, what a delivery would fill) and only happen when you press Enter. It runs inside
+ReliefGrid with no AI service and no internet, so it keeps working in a disaster zone (`app/services/assistant.py`).
+
+**The Log.** Every action with who did it. Sublogs on the left (requests, trucks and deliveries, stock arrivals,
+supply orders, rule changes, undo history), filters for shelter, item, person and time, five ways to sort (newest,
+oldest, by shelter, by item, by person), and search that highlights every match like Ctrl+F. Click any `WB-`,
+`REQ-` or `PO-` number to open that thing's own sublog: everything that happened to it, in order. Click an entry
+for its details. The latest change shows **Undo** right on its entries (for 10 minutes); what's shown exports to CSV.
+
+**Undo really undoes, and never hides.** Undo reverses the data (stock goes back, the request disappears from the
+queue), but the log only ever grows: the original entries stay, struck through and marked "Undone", next to an
+"Undid: ..." entry. If the change already left the building, like a supply order sent on WhatsApp or Gmail, undoing
+it keeps the order in the log as cancelled and opens a ready-made "please cancel PO-..." message to the same person on
+the same channel (cancelling an order does the same, and reopening it offers a "please go ahead after all"). Sending
+that message is logged too, so the paper trail shows the supplier was told.
+
+**The sample is a real-looking shift.** Requests came in over the last day, typed in by hub staff (Sana, Usman);
+warehouse staff counted stock; trucks left with named drivers and were signed for by shelter leads (Ayesha at Dadu
+Girls High School, Dr. Khalid at Moro Rural Health Centre) at times that match the driving distance; one supply
+order already arrived and another is on its way. All times are relative to when you first run it.
 
 **Also included**
 
@@ -106,6 +127,9 @@ every match like Ctrl+F, and what's shown exports to CSV. Undo reverses your las
 - **Optional rules**: reserve stock for Critical requests, days of supply per shelter, cap units per shelter,
   low-stock threshold. **Planning figures** are editable under Rules.
 - **Night shift mode** (dark theme).
+- **Motion with a purpose**: the truck moves along its route on the tracking screens, the fair-share bars move from
+  before to after when you apply a days cap, the 7 checks tick in one by one, and a tick appears when an order is
+  sent or a delivery is signed. All of it switches off with the operating system's "reduce motion" setting.
 - **Works offline** after installing (the street map tiles are the only thing that need internet).
 
 **Phones (`python run.py --phones`).** The terminal prints the address phones use. The phone must be on the same
@@ -164,12 +188,13 @@ docs/                  architecture, Phase 2 cookbook
 | POST | `/api/inventory/restock` | Record a delivery (item, quantity, warehouse, source, waybill); waiting requests are allocated |
 | GET | `/api/inventory/restock/preview` | What a delivery would do, without saving |
 | GET / POST | `/api/shelters`, `/api/warehouses` | List / add |
-| GET | `/api/allocations`, `/api/events` | Allocation records and the activity log |
+| GET | `/api/allocations`, `/api/events` | Allocation records and the activity log (each entry tagged with its sublog, shelters, items and numbers) |
 | POST | `/api/import/preview` · `/api/import/commit` | Check a file / import its good rows |
 | GET | `/api/reports?format=json\|csv\|pdf` | Fulfilled and unfilled report |
 | GET | `/api/integrity` | The seven integrity checks |
 | GET | `/api/sitrep` | A shareable situation report |
 | GET | `/api/search?q=` | Quick find across shelters, requests, items, warehouses |
+| GET | `/api/ask?q=` | The command bar: plain words in, an answer or a previewed action (with the exact API call) out |
 | PATCH | `/api/requests/{id}` | Change a request's quantity or urgency |
 | GET | `/api/dispatch` | To load (per route), on the way and delivered (per waybill) |
 | POST | `/api/dispatch/waybill` | Put everything reserved on a route onto a numbered waybill |
@@ -197,7 +222,7 @@ Errors always come back as `{"error": "plain-English message"}` with a 400, 404,
 python -m pytest -q
 ```
 
-167 tests cover the priority order and every tie-break, partial fills, negative-stock prevention, zero and
+181 tests cover the priority order and every tie-break, partial fills, negative-stock prevention, zero and
 missing stock, nearest-warehouse selection, determinism, the optional rules, undo, cancellation, reports in all
 three formats, friendly error messages, importing messy, duplicated, mis-typed and unreadable files, waybills
 (only what's on the waybill leaves, numbers never reused, signed phone links, short deliveries re-queued),

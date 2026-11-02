@@ -1,6 +1,7 @@
 // Actions used from more than one screen: undo, "Why?" panel, record delivery, supply request, integrity, report menu.
 import { api, closeButton, closeOverlay, debounce, esc, icon, n, openDrawer, openModal, plural,
          statusBadge, timeLabel, title, toast, toastError, urgencyTag } from "./ui.js";
+import { capBarsHtml, capChanges, celebrate, playCapBars, runTruck, truckStrip } from "./motion.js";
 
 let refreshFn = () => {};
 export const onRefresh = (fn) => (refreshFn = fn);
@@ -10,10 +11,45 @@ export const refresh = () => refreshFn();
 export async function undo() {
   try {
     const r = await api("/api/undo", { method: "POST" });
-    toast(`Undone: ${r.undone}`);
     closeOverlay();
+    toast(r.notify ? `Undone: ${r.notify.order} is cancelled.` : `Undone: ${r.undone}`);
     refresh();
+    if (r.notify) openNotice(r.notify);
   } catch (e) { toastError(e); }
+}
+
+// ---------- Telling the supplier after Undo or Cancel ----------
+// Undo changes ReliefGrid, but a WhatsApp or email that already went out can't be unsent. So the same person gets
+// a short follow-up ("please cancel" or "please go ahead after all"), on the same channel, and that is logged.
+export function openNotice(nt) {
+  if (!nt) return;
+  const VIA = { whatsapp: "WhatsApp", email: "Gmail", copy: "a copied message" };
+  const cancel = nt.kind === "cancel";
+  const el = openModal(`<div style="display:flex;justify-content:space-between;gap:12px"><div>
+      <h2>${cancel ? `Tell ${esc(nt.supplier)} to cancel` : `Tell ${esc(nt.supplier)} it's back on`}</h2>
+      <p style="margin:0;color:var(--muted)">${esc(nt.order)} went out by ${VIA[nt.via] || "message"}. ${cancel
+        ? "Undo changed ReliefGrid, but it can't unsend that message, so send them this."
+        : "They were told to cancel it, so let them know to go ahead."}</p></div>${closeButton}</div>
+    <div class="bubble-wrap" style="margin-top:16px"><span class="eyebrow" style="color:var(--muted)">Message</span>
+      <div class="bubble">${esc(nt.text).replace(/\*(.+?)\*/g, "<strong>$1</strong>")}</div></div>
+    <div class="notice-actions">
+      <button class="btn ${nt.via !== "email" && nt.via !== "copy" ? "primary" : ""}" type="button" data-via="whatsapp">${icon.chat(17)}Send on WhatsApp</button>
+      <button class="btn ${nt.via === "email" ? "primary" : ""}" type="button" data-via="email">${icon.mail(17)}Send by Gmail</button>
+      <button class="btn ${nt.via === "copy" ? "primary" : ""}" type="button" data-via="copy">${icon.copy(17)}Copy</button>
+      <button class="btn link" type="button" data-close>I'll tell them myself</button></div>`);
+  el.querySelectorAll("[data-via]").forEach((b) => (b.onclick = async () => {
+    const via = b.dataset.via;
+    if (via === "whatsapp") window.open(`https://wa.me/${(nt.contact.whatsapp || "").replace(/\D/g, "")}?text=${encodeURIComponent(nt.text)}`, "_blank");
+    else if (via === "email") window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(nt.contact.email || "")}&su=${encodeURIComponent(nt.subject)}&body=${encodeURIComponent(nt.text.replace(/\*/g, ""))}`, "_blank");
+    else { try { await navigator.clipboard.writeText(nt.text); } catch { /* still logged */ } }
+    try {
+      await api(`/api/supply/orders/${encodeURIComponent(nt.order)}/notice`, { method: "POST", body: { kind: nt.kind, via } });
+      closeOverlay();
+      celebrate();
+      toast(`${cancel ? "Cancellation" : "Go-ahead"} for ${nt.order} ${via === "copy" ? "copied" : "sent"}. It's in the log.`);
+      refresh();
+    } catch (e) { toastError(e); }
+  }));
 }
 
 export async function updateUndoButton() {
@@ -30,6 +66,7 @@ export async function updateUndoButton() {
 export async function act(promise, message) {
   try {
     const result = await promise;
+    celebrate();
     toast(typeof message === "function" ? message(result) : message, { action: "Undo", onAction: undo });
     refresh();
     return result;
@@ -61,6 +98,7 @@ export async function openTrack(code) {
     const amount = (q, unit, item) => { const u = (unit || "").toLowerCase(), it = item.toLowerCase(); return !u || u === "units" || it.includes(u) ? `${n(q)} ${it}` : `${n(q)} ${u} of ${it}`; };
     const body = t.type === "waybill"
       ? `<p class="track-route">${icon.truck(16)}${esc(t.from.name)} → <strong>${esc(t.to.name)}</strong>${t.to.people != null ? ` · ${n(t.to.people)} people` : ""}</p>
+        ${truckStrip(t)}
         ${timelineHtml(t)}
         <h3 class="track-h">On this waybill</h3>
         <ul class="track-items">${t.items.map((i) => `<li><span>${esc(i.item)}</span><strong class="num">${n(i.quantity)} ${esc(i.unit || "")}</strong></li>`).join("")}
@@ -77,6 +115,7 @@ export async function openTrack(code) {
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:22px">
         <button class="btn" type="button" data-copy>${icon.copy(16)}Copy status</button>
         ${t.type === "request" ? `<button class="btn" type="button" data-why="${esc(t.number)}">Why it got this</button>` : ""}</div>`;
+    runTruck(el);
     el.querySelectorAll("[data-track]").forEach((b) => (b.onclick = () => openTrack(b.dataset.track)));
     el.querySelectorAll("[data-why]").forEach((b) => (b.onclick = () => openWhy(b.dataset.why)));
     el.querySelector("[data-copy]").onclick = async () => {
@@ -358,6 +397,7 @@ export async function openSupplyRequest(prefill = []) {
         try { await navigator.clipboard.writeText(text); } catch { /* still saved */ }
       }
       closeOverlay();
+      celebrate();
       toast(`${o.id} ${via === "copy" ? "copied and saved" : `sent to ${o.supplier}`}. Tick it off in Log → Supply orders when it arrives.`,
         { action: "View", onAction: () => { location.hash = "#/log?tab=orders"; } });
       refresh();
@@ -376,11 +416,41 @@ export async function openIntegrity() {
     <div class="skeleton" style="height:240px;margin-top:20px"></div>`);
   try {
     const r = await api("/api/integrity");
-    el.querySelector(".skeleton").outerHTML = `<ul class="checks">${r.checks.map((c) => `
-      <li><span class="${c.passed ? "ok" : "no"}">${c.passed ? icon.check(20) : icon.x(20)}</span>
+    const ok = r.passed === r.total;
+    el.querySelector(".skeleton").outerHTML = `<ul class="checks animated">${r.checks.map((c, i) => `
+      <li style="--i:${i}"><span class="${c.passed ? "ok" : "no"}">${c.passed ? icon.check(20) : icon.x(20)}</span>
         <div><strong>${esc(c.name)}</strong><span>${esc(c.detail)}</span></div></li>`).join("")}</ul>
-      <p style="margin:16px 0 0;font-size:14px;color:var(--muted)">${r.passed} of ${r.total} passed. These also run in the automated tests and the stress test.</p>`;
+      <div class="lock-wrap ${ok ? "" : "bad"}"><svg width="40" height="44" viewBox="0 0 40 44" aria-hidden="true">
+        <path class="lock-shackle" d="M11 20v-7a9 9 0 0 1 18 0v7" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <rect x="5" y="19" width="30" height="23" rx="6" fill="currentColor"/><circle cx="20" cy="29" r="3.2" fill="#fff"/><rect x="18.6" y="30" width="2.8" height="6" rx="1.4" fill="#fff"/></svg>
+        <div><strong class="lock-count">0 of ${r.total} passed</strong><span>${ok ? "The numbers add up. These also run in the automated tests." : "Something doesn't add up. Check the red line above."}</span></div></div>`;
+    const count = el.querySelector(".lock-count"), wrap = el.querySelector(".lock-wrap");
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    r.checks.forEach((c, i) => setTimeout(() => { if (count.isConnected) count.textContent = `${r.checks.slice(0, i + 1).filter((x) => x.passed).length} of ${r.total} passed`; },
+      reduce ? 0 : i * 280 + 300));
+    setTimeout(() => { if (ok) wrap.classList.add("shut"); }, reduce ? 0 : r.checks.length * 280 + 350);
   } catch (e) { toastError(e); }
+}
+
+// ---------- Days cap: apply it and show what moved ----------
+export async function applyCap(days = 7) {
+  try {
+    const before = (await api("/api/shelters")).shelters;
+    const r = await api("/api/rules", { method: "PUT", body: { max_days_per_shelter: days } });
+    const after = (await api("/api/shelters")).shelters;
+    celebrate();
+    const el = openModal(`<div style="display:flex;justify-content:space-between;gap:12px"><div>
+        <h2>${days ? `Capped at ${days} days per shelter` : "Days cap removed"}</h2>
+        <p style="margin:0;color:var(--muted)">${days ? "Stock above the cap that wasn't on a truck yet went to shelters with too little." : "Back to strict priority order."}</p></div>${closeButton}</div>
+      ${capBarsHtml(capChanges(before, after), days || 7)}
+      <div class="cap-sum"><span>${n(r.released || 0)} units freed</span><span>${plural(r.requests_served || 0, "more request")} served</span></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
+        <button class="btn" type="button" data-undo>Undo</button><button class="btn primary" type="button" data-close>Done</button></div>`);
+    el.querySelector("[data-undo]").onclick = () => undo();
+    playCapBars(el);
+    refresh();
+    return r;
+  } catch (e) { toastError(e); return null; }
 }
 
 // ---------- Report menu ----------

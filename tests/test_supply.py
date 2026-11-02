@@ -117,7 +117,36 @@ def test_contact_defaults_and_validation(client):
                                                    "email": "a@b.org"}).json()["whatsapp"] == "+971501234567"
 
 
-def test_undo_button_reverts_an_order(client):
+def test_undo_of_a_sent_order_cancels_it_and_offers_a_cancellation_message(client):
+    before = water(client)["on_order"]
     oid = order(client, 50)
-    assert client.post("/api/undo").status_code == 200
-    assert all(o["id"] != oid for o in client.get("/api/supply/orders").json()["orders"])
+    r = client.post("/api/undo").json()
+    # The WhatsApp already went out: the order stays visible as cancelled, and a message to send is ready.
+    assert get(client, oid)["status"] == "cancelled" and water(client)["on_order"] == before
+    n = r["notify"]
+    assert n["kind"] == "cancel" and n["via"] == "whatsapp" and n["contact"]["whatsapp"]
+    assert oid in n["text"] and "50 cartons of water" in n["text"]
+    assert client.post(f"/api/supply/orders/{oid}/notice", json={"kind": "cancel", "via": "whatsapp"}).status_code == 200
+    log = client.get("/api/events", params={"kind": "order"}).json()
+    assert log[0]["message"].startswith(f"Cancellation for {oid} sent to")
+    assert any(e["message"].startswith(f"{oid} ordered") for e in log)          # the original order is still in the log
+    assert client.post(f"/api/supply/orders/{oid}/notice", json={"kind": "oops", "via": "whatsapp"}).status_code == 400
+
+
+def test_cancel_then_undo_offers_a_go_ahead_message(client):
+    oid = order(client, 50, via="email")
+    c = client.post(f"/api/supply/orders/{oid}/cancel").json()
+    assert c["notify"]["kind"] == "cancel" and c["notify"]["via"] == "email"
+    r = client.post("/api/undo").json()
+    assert get(client, oid)["status"] == "ordered" and r["notify"]["kind"] == "reinstate"
+    assert "go ahead" in r["notify"]["text"]
+
+
+def test_undo_keeps_the_log_and_marks_what_was_undone(client):
+    client.post("/api/requests", json={"shelter_id": "SH-07", "item": "Tents", "quantity": 4, "urgency": "high"})
+    client.post("/api/undo")
+    ev = client.get("/api/events").json()
+    assert ev[0]["kind"] == "undo" and not ev[0]["undone"]
+    marked = [e for e in ev if e["undone"]]
+    assert marked and any("Johi Tent City" in e["message"] for e in marked)
+    assert all(r["id"] != "REQ-049" for r in client.get("/api/requests").json())     # the data really was reversed

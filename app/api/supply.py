@@ -86,3 +86,9 @@ def get_contact():
 def put_contact(body: Contact):
     """Who supply requests go to: a name, a WhatsApp number and an email address."""
     return supply.save_contact(body.model_dump())
+
+
+@router.post("/orders/{order_id}/notice")
+def notice_sent(order_id: str, body: dict):
+    """Record that the cancellation (or go-ahead) message for an order was sent to the supplier."""
+    return supply.record_notice(order_id, (body or {}).get("kind"), (body or {}).get("via"))

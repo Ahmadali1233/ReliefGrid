@@ -10,6 +10,7 @@
 <link rel="preload" href="fonts/plus-jakarta-sans-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/motion.css">
 <script>try{if(localStorage.getItem("reliefgrid-theme")==="dark")document.documentElement.dataset.theme="dark"}catch(e){}</script>
 </head>
 <body>
@@ -26,7 +27,7 @@
       <a href="#/log">Log</a>
     </nav>
     <div class="top-actions">
-      <button class="btn-ghost-dark cmd-trigger" id="cmd-btn" type="button" aria-label="Find or track: waybills, requests, shelters, items" title="Quick find (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="label">Find or track</span><kbd>Ctrl K</kbd></button>
+      <button class="btn-ghost-dark cmd-trigger" id="cmd-btn" type="button" aria-label="Ask or do anything: questions, new requests, deliveries, tracking" title="Ask or do anything (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="label">Ask or do anything</span><kbd>Ctrl K</kbd></button>
       <button class="btn-ghost-dark icon-only" id="undo-btn" type="button" aria-label="Undo" title="Nothing to undo" disabled><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
       <div class="menu-wrap">
         <button class="btn-ghost-dark icon-only" id="more-btn" type="button" aria-label="More: import, rules, night mode" aria-haspopup="true" aria-expanded="false" aria-controls="more-menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>

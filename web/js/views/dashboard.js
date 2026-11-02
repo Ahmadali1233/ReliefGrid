@@ -1,6 +1,6 @@
 // Dashboard: one sentence that says what matters, then the numbers behind it.
 import { openSitrep } from "../extras.js";
-import { act, openIntegrity, openRestock, openSupplyRequest, openWhy, reportButton } from "../shared.js";
+import { act, applyCap, openIntegrity, openRestock, openSupplyRequest, openWhy, reportButton } from "../shared.js";
 import { drawReliefWeb } from "../reliefweb.js";
 import { api, countUp, debounce, esc, gotCell, icon, n, pct, plural, timeLabel, title, urgencyTag } from "../ui.js";
 
@@ -58,7 +58,8 @@ export async function render(main, { heroSlot, firstVisit }) {
         <button type="button" class="pill-check ${integrityOk ? "" : "fail"}" data-integrity>
           <span class="pulse"></span>${integrityOk ? `All ${s.integrity.total} integrity checks passed` : `${s.integrity.passed} of ${s.integrity.total} checks passed`}
           <span style="opacity:.7;font-weight:500">· see the maths</span></button>
-        ${notes.length ? `<div class="hero-notes">${notes.join("")}</div>` : ""}
+        ${notes.length ? `<div class="hero-notes">${notes[0]}${notes.length > 1 ? `<div class="more-notes" hidden>${notes.slice(1).join("")}</div>
+          <button type="button" class="notes-toggle" data-more-notes aria-expanded="false">${plural(notes.length - 1, "more alert")}</button>` : ""}</div>` : ""}
         <div class="hero-actions">
           ${s.stock.some((i) => i.to_order > 0)
             ? `<button class="btn primary" type="button" data-ask>${icon.chat(17)}Order supplies</button>`
@@ -72,10 +73,15 @@ export async function render(main, { heroSlot, firstVisit }) {
       <figure class="relief-web" aria-labelledby="web-cap"><figcaption id="web-cap">The relief web · live</figcaption><div id="web-box"></div></figure>
     </div></section>`;
   drawReliefWeb(heroSlot.querySelector("#web-box"), net);
+  heroSlot.querySelector("[data-more-notes]")?.addEventListener("click", (e) => {
+    const more = heroSlot.querySelector(".more-notes"), open = more.hidden;
+    more.hidden = !open;
+    e.currentTarget.setAttribute("aria-expanded", String(open));
+    e.currentTarget.textContent = open ? "Show fewer alerts" : plural(notes.length - 1, "more alert");
+  });
   heroSlot.querySelector("[data-fair]")?.addEventListener("click", (e) => {
     e.currentTarget.disabled = true;
-    act(api("/api/rules", { method: "PUT", body: { max_days_per_shelter: 7 } }),
-      (r) => `7-day rule on. ${n(r.released)} units released from over-supplied shelters and ${plural(r.requests_served, "request")} served.`);
+    applyCap(7);
   });
 
   const crit = k.critical_total;
