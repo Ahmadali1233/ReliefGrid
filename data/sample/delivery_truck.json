@@ -1,0 +1,4 @@
+{"delivery": "Truck 7 from Abu Dhabi", "items": [
+  {"depot": "WH-A", "product": "Water", "qty": 380, "uom": "cartons"},
+  {"depot": "WH-B", "product": "Blankets", "qty": 150, "uom": "blankets"}
+]}

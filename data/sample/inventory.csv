@@ -1,0 +1,15 @@
+warehouse_id,item,quantity,unit
+WH-A,Water,800,cartons
+WH-B,Water,400,cartons
+WH-A,Ready meals,1400,meals
+WH-B,Ready meals,600,meals
+WH-A,Blankets,400,blankets
+WH-B,Blankets,200,blankets
+WH-A,Tents,100,tents
+WH-B,Tents,50,tents
+WH-A,First aid kits,180,kits
+WH-B,First aid kits,120,kits
+WH-A,Baby milk,120,tins
+WH-B,Baby milk,60,tins
+WH-A,Hygiene kits,300,kits
+WH-B,Hygiene kits,200,kits

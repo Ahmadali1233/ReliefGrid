@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dispatch day="2">
+  <request><ref>D2-001</ref><site>SH-01</site><supply>Water</supply><amount>90</amount><severity>critical</severity></request>
+  <request><ref>D2-002</ref><site>SH-11</site><supply>Tents</supply><amount>12</amount><severity>high</severity></request>
+  <request><ref>D2-003</ref><site>SH-07</site><supply>Ready meals</supply><amount>200</amount><severity>moderate</severity></request>
+  <request><ref>D2-004</ref><site>SH-14</site><supply>First aid kits</supply><amount>30</amount><severity>critical</severity></request>
+</dispatch>

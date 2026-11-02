@@ -1,0 +1,12 @@
+﻿req_no,site,supply,units,level
+REQ-101,SH-03,Water,40,P1
+REQ-102,SH-05,"Tents, family size",-20,P2
+REQ-103,SH-99,Ready meals,60,P1
+REQ-104,SH-06,Hygiene kits,ten,P3
+REQ-105,SH-02,Blankets,2.5,P2
+REQ-101,SH-07,Water,30,P1
+REQ-106,SH-09,,25,P2
+REQ-107,SH-10,First aid kits,15,ASAP
+REQ-108,SH-12,ready meals ,80,P2
+REQ-109,SH-13,Baby milk,10,p1
+
