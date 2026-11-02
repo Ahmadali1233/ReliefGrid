@@ -2,6 +2,8 @@
 
 **Emergency Relief Operations & Dispatch System** — Team FEAST, RIT Dubai Software Engineering Competition 2026.
 
+**Demo video (2 minutes) and project ZIP:** [Google Drive](https://drive.google.com/drive/folders/1QquVxHKVi8Q_y84vOlo-enRnq-Q7BuaR?usp=sharing)
+
 ReliefGrid tracks every carton from a shelter's request to a signature at the shelter door, like a parcel, and
 makes sure supplies reach the people who need them most. It allocates stock in priority order
 (**Critical > High > Moderate**) from the nearest warehouse, puts every truckload on a numbered waybill that the
@@ -148,9 +150,10 @@ Requests are served one at a time in this order, so the same data always gives t
 
 Each request gets `min(what it still needs, what's left)`. Stock comes from the nearest warehouse with the item;
 if that runs short, the next nearest tops it up. Allocation runs automatically after every change (new request,
-restock, import, cancellation, rule change) and only serves what is still unmet. Stock already allocated counts
-as dispatched and is never taken back; the optional **Reserve for Critical** rule keeps a share back for
-emergencies that arrive later.
+restock, import, cancellation, rule change) and only serves what is still unmet. Reserved stock stays with its
+request unless something frees it (the request is reduced or cancelled, or the days-of-supply rule releases it);
+stock that has left on a truck is never taken back. The optional **Reserve for Critical** rule keeps a share back
+for emergencies that arrive later.
 
 ## Project structure
 
@@ -214,7 +217,7 @@ docs/                  architecture, Phase 2 cookbook
 | GET / POST | `/api/undo` | What can be undone / undo it |
 | POST | `/api/reset` | Demo only: `{"confirm": "RESET", "sample": true}` |
 
-Errors always come back as `{"error": "plain-English message"}` with a 400, 404, 409 or 413 status.
+Errors always come back as `{"error": "plain-English message"}` with a 400, 403, 404, 409 or 413 status.
 
 ## Tests
 
@@ -233,11 +236,9 @@ engine runs that check every rule.
 
 ## Team FEAST
 
-| Member | Role |
-| --- | --- |
-| [Name] | Engine, rules and tests |
-| [Name] | API, database, import and reports |
-| [Name] | Interface, documentation and demo |
+- Ezzeldin Kamaledin
+- Yassin Mohammad
+- Ahmad Ali
 
 Map: Leaflet (BSD-2) with OpenStreetMap tiles (© OpenStreetMap contributors).
 Font: Plus Jakarta Sans (SIL Open Font License), bundled in `web/fonts/` so the app works offline.
